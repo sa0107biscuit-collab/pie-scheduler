@@ -360,6 +360,60 @@
     save(); resetForm(); renderAll();
   });
 
+  // ---------- 画像として保存 ----------
+  function exportImage() {
+    const SCALE = 3;           // 3倍の解像度で出力（1320 x 1320 px）
+    const W = 440, H = 440;
+    const root = getComputedStyle(document.documentElement);
+    const v = (name) => root.getPropertyValue(name).trim();
+
+    // 画面のSVGを複製し、画像向けに調整する
+    const clone = chart.cloneNode(true);
+    clone.querySelectorAll('#hand, .hand-dot, #center-time, #center-sub').forEach((n) => n.remove());
+    clone.setAttribute('width', W);
+    clone.setAttribute('height', H);
+
+    // 中央には現在時刻ではなく日付を入れる
+    const d = new Date();
+    const dateText = `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())}`;
+    clone.appendChild(svgEl('text', { class: 'center-date', x: CX, y: CY, 'dominant-baseline': 'middle' }, dateText));
+
+    // 単体の画像ではページのCSSが使えないので、必要なスタイルを埋め込む
+    const css = `
+      text { font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", sans-serif; }
+      .seg-label { font-size: 12px; fill: #fff; font-weight: 600; paint-order: stroke; stroke: rgba(0,0,0,0.25); stroke-width: 2px; }
+      .hour-label { font-size: 12px; fill: ${v('--muted')}; text-anchor: middle; dominant-baseline: middle; }
+      .tick { stroke: ${v('--tick')}; stroke-width: 1; }
+      .tick.major { stroke-width: 2; }
+      .center-date { font-size: 22px; font-weight: 700; fill: ${v('--text')}; text-anchor: middle; }`;
+    clone.insertBefore(svgEl('style', {}, css), clone.firstChild);
+    clone.insertBefore(svgEl('rect', { x: 0, y: 0, width: W, height: H, fill: v('--card') }), clone.children[1]);
+
+    // var(--xxx) を実際の色に置き換えてから文字列化
+    let xml = new XMLSerializer().serializeToString(clone);
+    xml = xml.replace(/var\(--([\w-]+)\)/g, (_, name) => v('--' + name) || '#888888');
+
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = W * SCALE;
+      canvas.height = H * SCALE;
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob((blob) => {
+        if (!blob) return alert('画像の作成に失敗しました。');
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `schedule-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}.png`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      }, 'image/png');
+    };
+    img.onerror = () => alert('画像の作成に失敗しました。');
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(xml);
+  }
+
+  $('#btn-image').addEventListener('click', exportImage);
+
   // ---------- 起動 ----------
   resetForm();
   renderAll();
