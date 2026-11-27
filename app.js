@@ -34,6 +34,10 @@
   const btnCancel = $('#btn-cancel');
   const list = $('#event-list');
   const emptyMsg = $('#empty');
+  const centerTip = $('#center-tip');
+  let centerFullName = '';   // 中央で省略表示中の予定名（省略していないときは空）
+  let lastPointerType = 'mouse';
+  let tipTimer = null;
 
   // ---------- ユーティリティ ----------
   function uid() {
@@ -108,6 +112,7 @@
 
   // ---------- 円グラフ描画 ----------
   function renderChart() {
+    hideTip();
     chart.replaceChildren();
 
     // 背景リング（空き時間）
@@ -150,8 +155,8 @@
     }
 
     // 中央テキスト（現在時刻・現在の予定）
-    chart.appendChild(svgEl('text', { class: 'center-time', id: 'center-time', x: CX, y: CY - 2 }, ''));
-    chart.appendChild(svgEl('text', { class: 'center-sub', id: 'center-sub', x: CX, y: CY + 22 }, ''));
+    chart.appendChild(svgEl('text', { class: 'center-time', id: 'center-time', x: CX, y: CY - 14 }, ''));
+    chart.appendChild(svgEl('text', { class: 'center-sub', id: 'center-sub', x: CX, y: CY + 28 }, ''));
 
     // 現在時刻の針
     chart.appendChild(svgEl('line', { class: 'hand', id: 'hand', x1: CX, y1: CY, x2: CX, y2: CY - R_OUT }));
@@ -159,6 +164,18 @@
     // 針は中央テキストより上に出すと読みにくいので、テキストを前面へ
     chart.appendChild($('#center-time'));
     chart.appendChild($('#center-sub'));
+
+    // 中央の透明な当たり判定（省略された予定名を、ホバー / タップで全文表示）
+    const hit = svgEl('circle', { id: 'center-hit', cx: CX, cy: CY, r: R_IN - 4, fill: 'transparent' });
+    hit.addEventListener('pointerdown', (ev) => { lastPointerType = ev.pointerType; });
+    hit.addEventListener('mouseenter', () => { if (lastPointerType === 'mouse') showTip(); });
+    hit.addEventListener('mouseleave', () => { if (lastPointerType === 'mouse') hideTip(); });
+    hit.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      if (lastPointerType === 'mouse') return;       // マウスはホバーで表示済み
+      if (centerTip.hidden) showTip(true); else hideTip();
+    });
+    chart.appendChild(hit);
 
     updateClock();
   }
@@ -177,8 +194,28 @@
     $('#center-time').textContent = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
     const nowMin = now.getHours() * 60 + now.getMinutes();
     const current = events.find((e) => intervals(e).some(([s, t]) => nowMin >= s && nowMin < t));
-    $('#center-sub').textContent = current ? current.title : '空き時間';
+    // 長い予定名が円の外にはみ出さないよう、10文字で切る
+    const name = current ? current.title : '空き時間';
+    $('#center-sub').textContent = name.length > 10 ? name.slice(0, 10) + '…' : name;
+    centerFullName = name.length > 10 ? name : '';
+    const hitEl = $('#center-hit');
+    if (hitEl) hitEl.style.cursor = centerFullName ? 'pointer' : 'default';
+    if (!centerFullName) hideTip();
   }
+
+  // ---------- 中央の予定名（全文表示） ----------
+  function showTip(autoHide) {
+    if (!centerFullName) return;
+    centerTip.textContent = centerFullName;
+    centerTip.hidden = false;
+    clearTimeout(tipTimer);
+    if (autoHide) tipTimer = setTimeout(hideTip, 4000);   // タップ時は4秒で自動的に消す
+  }
+  function hideTip() {
+    clearTimeout(tipTimer);
+    centerTip.hidden = true;
+  }
+  document.addEventListener('click', hideTip);
 
   // ---------- サマリー ----------
   function renderSummary() {
@@ -369,7 +406,7 @@
 
     // 画面のSVGを複製し、画像向けに調整する
     const clone = chart.cloneNode(true);
-    clone.querySelectorAll('#hand, .hand-dot, #center-time, #center-sub').forEach((n) => n.remove());
+    clone.querySelectorAll('#hand, .hand-dot, #center-time, #center-sub, #center-hit').forEach((n) => n.remove());
     clone.setAttribute('width', W);
     clone.setAttribute('height', H);
 

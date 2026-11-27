@@ -14,7 +14,10 @@
 
   <main class="layout">
     <section class="chart-card" aria-label="24時間円グラフ">
-      <svg id="chart" viewBox="0 0 440 440" role="img" aria-label="24時間のスケジュール円グラフ"></svg>
+      <div class="chart-wrap">
+        <svg id="chart" viewBox="0 0 440 440" role="img" aria-label="24時間のスケジュール円グラフ"></svg>
+        <div id="center-tip" class="center-tip" role="status" hidden></div>
+      </div>
       <div class="summary">
         <div><span class="label">予定あり</span><strong id="sum-used">0時間</strong></div>
         <div><span class="label">空き時間</span><strong id="sum-free">24時間</strong></div>
