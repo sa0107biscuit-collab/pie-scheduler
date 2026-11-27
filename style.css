@@ -169,7 +169,11 @@ button.danger { color: var(--danger); }
 .tools { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
 
 /* SVG */
-.seg { cursor: pointer; transition: opacity 0.15s; }
+#chart { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.seg, .handle { touch-action: none; }   /* 予定の上でドラッグしてもページがスクロールしない */
+.seg { cursor: grab; transition: opacity 0.15s; }
+.handle { cursor: grab; }
+.handle-label { font-size: 11px; font-weight: 600; fill: var(--text); pointer-events: none; }
 .seg:hover, .seg:focus-visible { opacity: 0.8; outline: none; }
 .seg-label { font-size: 12px; fill: #fff; pointer-events: none; font-weight: 600; paint-order: stroke; stroke: rgba(0,0,0,0.25); stroke-width: 2px; }
 .hour-label { font-size: 12px; fill: var(--muted); text-anchor: middle; dominant-baseline: middle; }

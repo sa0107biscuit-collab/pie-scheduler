@@ -137,7 +137,7 @@
         const label = e.title.length > 6 ? e.title.slice(0, 6) + '…' : e.title;
         g.appendChild(svgEl('text', { class: 'seg-label', x: lx, y: ly, 'text-anchor': 'middle', 'dominant-baseline': 'middle' }, label));
       }
-      g.addEventListener('click', () => startEdit(e.id));
+      g.addEventListener('pointerdown', (ev) => beginDrag(ev, e.id, 'move'));
       g.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); startEdit(e.id); } });
       chart.appendChild(g);
     }
@@ -151,6 +151,25 @@
       if (h % 3 === 0) {
         const [tx, ty] = polar(R_OUT + 22, h * 60);
         chart.appendChild(svgEl('text', { class: 'hour-label', x: tx, y: ty }, String(h)));
+      }
+    }
+
+    // 選択中の予定の「つまみ」（開始・終了の端をドラッグして調整）
+    const sel = events.find((x) => x.id === editingId);
+    if (sel) {
+      for (const edge of ['start', 'end']) {
+        const min = toMin(sel[edge]);
+        const [hx, hy] = polar((R_OUT + R_IN) / 2, min);
+        const [lx, ly] = polar(R_IN - 16, min);
+        const hg = svgEl('g', { class: 'handle', 'data-edge': edge });
+        hg.appendChild(svgEl('title', {}, edge === 'start' ? '開始時刻（ドラッグで調整）' : '終了時刻（ドラッグで調整）'));
+        hg.appendChild(svgEl('circle', { cx: hx, cy: hy, r: 20, fill: 'transparent' }));   // 指で触れやすい大きめの当たり判定
+        hg.appendChild(svgEl('circle', { cx: hx, cy: hy, r: 8, fill: '#ffffff', stroke: sel.color, 'stroke-width': 3 }));
+        hg.addEventListener('pointerdown', (ev) => beginDrag(ev, sel.id, edge));
+        chart.appendChild(hg);
+        chart.appendChild(svgEl('text', {
+          class: 'handle-label', x: lx, y: ly, 'text-anchor': 'middle', 'dominant-baseline': 'middle',
+        }, sel[edge]));
       }
     }
 
@@ -216,6 +235,104 @@
     centerTip.hidden = true;
   }
   document.addEventListener('click', hideTip);
+
+  // ---------- ドラッグで移動 / 開始・終了の調整 ----------
+  const SNAP = 15;            // 動かす単位（分）。5 や 10 に変えることもできます
+  const MOVE_THRESHOLD = 4;   // この距離(px)以上動いたらドラッグとみなす（それ未満はタップ）
+  let drag = null;
+  let suppressClickUntil = 0;
+
+  // ポインタの位置を「0:00が真上・時計回り」の分（0〜1440）に変換
+  function pointerToMin(ev) {
+    const pt = chart.createSVGPoint();
+    pt.x = ev.clientX;
+    pt.y = ev.clientY;
+    const p = pt.matrixTransform(chart.getScreenCTM().inverse());
+    let ang = Math.atan2(p.y - CY, p.x - CX) + Math.PI / 2;
+    if (ang < 0) ang += 2 * Math.PI;
+    return (ang / (2 * Math.PI)) * 1440;
+  }
+
+  // mode: 'move'（全体を移動） / 'start'（開始を調整） / 'end'（終了を調整）
+  function beginDrag(ev, id, mode) {
+    if (ev.pointerType === 'mouse' && ev.button !== 0) return;
+    const e = events.find((x) => x.id === id);
+    if (!e) return;
+    try { ev.target.releasePointerCapture(ev.pointerId); } catch (_) { /* 未対応なら無視 */ }
+    ev.preventDefault();
+    drag = {
+      id, mode,
+      pointerId: ev.pointerId,
+      x0: ev.clientX, y0: ev.clientY,
+      prev: pointerToMin(ev),
+      delta: 0,
+      dur: duration(e),
+      orig: { start: toMin(e.start), end: toMin(e.end) },
+      moved: false,
+    };
+    window.addEventListener('pointermove', onDragMove);
+    window.addEventListener('pointerup', onDragEnd);
+    window.addEventListener('pointercancel', onDragEnd);
+  }
+
+  function onDragMove(ev) {
+    if (!drag || ev.pointerId !== drag.pointerId) return;
+    if (!drag.moved) {
+      if (Math.hypot(ev.clientX - drag.x0, ev.clientY - drag.y0) < MOVE_THRESHOLD) return;
+      drag.moved = true;
+      if (editingId !== drag.id) selectEvent(drag.id);
+    }
+    const e = events.find((x) => x.id === drag.id);
+    if (!e) return;
+    const cur = pointerToMin(ev);
+
+    if (drag.mode === 'move') {
+      // 0:00 をまたいでも連続して動くよう、差分を足し上げる
+      let d = cur - drag.prev;
+      if (d > 720) d -= 1440; else if (d < -720) d += 1440;
+      drag.delta += d;
+      drag.prev = cur;
+      const shift = Math.round(drag.delta / SNAP) * SNAP;
+      e.start = toHHMM(drag.orig.start + shift);
+      e.end = toHHMM(drag.orig.end + shift);
+    } else {
+      const snapped = (((Math.round(cur / SNAP) * SNAP) % 1440) + 1440) % 1440;
+      const newStart = drag.mode === 'start' ? snapped : drag.orig.start;
+      const newEnd = drag.mode === 'end' ? snapped : drag.orig.end;
+      if (newStart === newEnd) return;                                   // 長さ0になる位置は無視
+      const newDur = (((newEnd - newStart) % 1440) + 1440) % 1440;
+      if (Math.abs(newDur - drag.dur) > 720) return;                     // 反対側へ飛び越える動きは無視
+      drag.dur = newDur;
+      e.start = toHHMM(newStart);
+      e.end = toHHMM(newEnd);
+    }
+
+    if (editingId === e.id) { fStart.value = e.start; fEnd.value = e.end; }
+    renderAll();
+  }
+
+  function onDragEnd(ev) {
+    if (!drag || ev.pointerId !== drag.pointerId) return;
+    window.removeEventListener('pointermove', onDragMove);
+    window.removeEventListener('pointerup', onDragEnd);
+    window.removeEventListener('pointercancel', onDragEnd);
+    const d = drag;
+    drag = null;
+    suppressClickUntil = performance.now() + 300;   // 直後の click で選択解除されないようにする
+    if (d.moved) {
+      save();
+      renderAll();
+    } else if (ev.type === 'pointerup' && editingId !== d.id) {
+      selectEvent(d.id);                            // ほとんど動かさなかった = タップ → 選択
+    }
+  }
+
+  // 円グラフの何もない場所をタップ / クリックすると、選択を解除
+  chart.addEventListener('click', (ev) => {
+    if (performance.now() < suppressClickUntil) return;
+    if (ev.target.closest && ev.target.closest('.seg, .handle, #center-hit')) return;
+    if (editingId) { resetForm(); renderAll(); }
+  });
 
   // ---------- サマリー ----------
   function renderSummary() {
@@ -296,7 +413,8 @@
     showError('');
   }
 
-  function startEdit(id) {
+  // 予定を選択（フォームに内容を入れ、円グラフにつまみを表示）。入力欄にはフォーカスしない
+  function selectEvent(id) {
     const e = events.find((x) => x.id === id);
     if (!e) return;
     editingId = id;
@@ -308,7 +426,12 @@
     btnSubmit.textContent = '更新';
     btnCancel.hidden = false;
     showError('');
-    renderList();
+    renderAll();
+  }
+
+  // 予定を選択して、予定名の入力欄へ移動（一覧の「編集」ボタン・キーボード用）
+  function startEdit(id) {
+    selectEvent(id);
     fTitle.focus();
     form.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
@@ -344,7 +467,7 @@
     renderAll();
   });
 
-  btnCancel.addEventListener('click', () => { resetForm(); renderList(); });
+  btnCancel.addEventListener('click', () => { resetForm(); renderAll(); });
   fColor.addEventListener('input', () => setColor(fColor.value));
 
   for (const c of PALETTE) {
@@ -406,7 +529,7 @@
 
     // 画面のSVGを複製し、画像向けに調整する
     const clone = chart.cloneNode(true);
-    clone.querySelectorAll('#hand, .hand-dot, #center-time, #center-sub, #center-hit').forEach((n) => n.remove());
+    clone.querySelectorAll('#hand, .hand-dot, #center-time, #center-sub, #center-hit, .handle, .handle-label').forEach((n) => n.remove());
     clone.setAttribute('width', W);
     clone.setAttribute('height', H);
 
